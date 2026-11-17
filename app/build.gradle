@@ -1,0 +1,13 @@
+plugins { id 'com.android.application' version '8.6.1' }
+
+android {
+    namespace 'com.example.apkcopy'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.example.apkcopy'
+        minSdk 23
+        targetSdk 28
+        versionCode 1
+        versionName '1.0'
+    }
+}
