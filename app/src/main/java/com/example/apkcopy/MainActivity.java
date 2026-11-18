@@ -16,11 +16,13 @@ import java.io.*;
 import java.util.*;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import java.util.zip.Deflater;
 
 public class MainActivity extends Activity {
     LinearLayout list;
     ArrayList<ApplicationInfo> apps = new ArrayList<>();
     File pendingExport;
+    volatile boolean isExporting;
     static final int SAVE_EXPORT_REQUEST = 42;
     int blue = 0xff1769aa;
     @Override public void onCreate(Bundle b) {
@@ -54,31 +56,49 @@ public class MainActivity extends Activity {
         Toast.makeText(this, apps.size()+" apps found",Toast.LENGTH_SHORT).show();
     }
     void exportApp(ApplicationInfo ai) {
+        if(isExporting) { Toast.makeText(this,"An export is already being prepared",Toast.LENGTH_SHORT).show(); return; }
+        isExporting=true;
         try {
             PackageInfo pi=getPackageManager().getPackageInfo(ai.packageName,0);
             ArrayList<String> paths=new ArrayList<>(); paths.add(pi.applicationInfo.sourceDir);
             if(pi.applicationInfo.splitSourceDirs!=null) paths.addAll(Arrays.asList(pi.applicationInfo.splitSourceDirs));
             String label=getPackageManager().getApplicationLabel(ai).toString().replaceAll("[^A-Za-z0-9._-]","_");
-            File dir=new File(getExternalFilesDir(null),"exported_apks");
+            File externalDir=getExternalFilesDir(null);
+            if(externalDir==null) throw new IOException("App storage is unavailable");
+            File dir=new File(externalDir,"exported_apks");
             if(!dir.exists()&&!dir.mkdirs()) throw new IOException("Cannot create output folder");
             File archive=new File(dir,label+"_"+ai.packageName+"_APKs.zip");
-            try(ZipOutputStream zip=new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(archive)))) {
-                byte[] buf=new byte[32768];
-                for(int i=0;i<paths.size();i++) {
-                    zip.putNextEntry(new ZipEntry(i==0?"base.apk":"split_"+i+".apk"));
-                    try(InputStream in=new FileInputStream(paths.get(i))) { int n; while((n=in.read(buf))>0) zip.write(buf,0,n); }
-                    zip.closeEntry();
-                }
-            }
-            pendingExport=archive;
-            new android.app.AlertDialog.Builder(this)
-                .setTitle("APK export ready")
-                .setMessage("The export contains "+paths.size()+" APK file(s). Share it or save a copy to a folder on your device.")
-                .setPositiveButton("Share",(d,w)->shareExport(archive))
-                .setNeutralButton("Save copy to device",(d,w)->saveExport(archive))
-                .setNegativeButton("Cancel",null)
-                .show();
-        } catch(Exception e) { new android.app.AlertDialog.Builder(this).setTitle("Export failed").setMessage(e.toString()).setPositiveButton("OK",null).show(); }
+            Toast.makeText(this,"Preparing APK export…",Toast.LENGTH_SHORT).show();
+            new Thread(()->{
+                try(ZipOutputStream zip=new ZipOutputStream(new BufferedOutputStream(new FileOutputStream(archive)))) {
+                    zip.setLevel(Deflater.NO_COMPRESSION);
+                    byte[] buf=new byte[65536];
+                    for(int i=0;i<paths.size();i++) {
+                        zip.putNextEntry(new ZipEntry(i==0?"base.apk":"split_"+i+".apk"));
+                        try(InputStream in=new FileInputStream(paths.get(i))) { int n; while((n=in.read(buf))>0) zip.write(buf,0,n); }
+                        zip.closeEntry();
+                    }
+                    runOnUiThread(()->showExportReady(archive,paths.size()));
+                } catch(Exception e) {
+                    runOnUiThread(()->showExportError(e));
+                } finally { isExporting=false; }
+            },"apk-export-worker").start();
+        } catch(Exception e) { isExporting=false; showExportError(e); }
+    }
+
+    void showExportReady(File archive,int apkCount) {
+        pendingExport=archive;
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("APK export ready")
+            .setMessage("The export contains "+apkCount+" APK file(s). Share it or save a copy to a folder on your device.")
+            .setPositiveButton("Share",(d,w)->shareExport(archive))
+            .setNeutralButton("Save copy to device",(d,w)->saveExport(archive))
+            .setNegativeButton("Cancel",null)
+            .show();
+    }
+
+    void showExportError(Exception e) {
+        new android.app.AlertDialog.Builder(this).setTitle("Export failed").setMessage(e.toString()).setPositiveButton("OK",null).show();
     }
 
     void shareExport(File archive) {
@@ -89,10 +109,16 @@ public class MainActivity extends Activity {
     }
 
     void saveExport(File archive) {
-        Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE); intent.setType("application/zip");
-        intent.putExtra(Intent.EXTRA_TITLE,archive.getName());
-        startActivityForResult(intent,SAVE_EXPORT_REQUEST);
+        try {
+            Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE); intent.setType("application/zip");
+            intent.putExtra(Intent.EXTRA_TITLE,archive.getName());
+            startActivityForResult(intent,SAVE_EXPORT_REQUEST);
+        } catch(Exception e) {
+            new android.app.AlertDialog.Builder(this).setTitle("Save picker unavailable")
+                .setMessage("Your headset does not provide a save picker. You can still share the export.")
+                .setPositiveButton("Share instead",(d,w)->shareExport(archive)).setNegativeButton("Cancel",null).show();
+        }
     }
 
     @Override protected void onActivityResult(int requestCode,int resultCode,Intent data) {
