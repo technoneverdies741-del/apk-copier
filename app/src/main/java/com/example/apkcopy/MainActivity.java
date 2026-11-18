@@ -23,6 +23,7 @@ public class MainActivity extends Activity {
     ArrayList<ApplicationInfo> apps = new ArrayList<>();
     File pendingExport;
     volatile boolean isExporting;
+    boolean openChatGPTAfterSave;
     static final int SAVE_EXPORT_REQUEST = 42;
     int blue = 0xff1769aa;
     @Override public void onCreate(Bundle b) {
@@ -90,10 +91,10 @@ public class MainActivity extends Activity {
         pendingExport=archive;
         new android.app.AlertDialog.Builder(this)
             .setTitle("APK export ready")
-            .setMessage("The export contains "+apkCount+" APK file(s). Share it or save a copy to a folder on your device.")
-            .setPositiveButton("Share",(d,w)->shareExport(archive))
-            .setNeutralButton("Save copy to device",(d,w)->saveExport(archive))
-            .setNegativeButton("Cancel",null)
+            .setMessage("The export contains "+apkCount+" APK file(s). Send it to ChatGPT over Wi-Fi, share it with another app, or save a copy on your device.")
+            .setPositiveButton("Send to ChatGPT",(d,w)->sendToChatGPT(archive))
+            .setNeutralButton("Share",(d,w)->shareExport(archive,"Share APK export"))
+            .setNegativeButton("Save copy",(d,w)->saveExport(archive))
             .show();
     }
 
@@ -101,11 +102,25 @@ public class MainActivity extends Activity {
         new android.app.AlertDialog.Builder(this).setTitle("Export failed").setMessage(e.toString()).setPositiveButton("OK",null).show();
     }
 
-    void shareExport(File archive) {
+    Intent createShareIntent(File archive) {
         Uri uri=Uri.parse("content://"+getPackageName()+".fileprovider/"+Uri.encode("exported_apks/"+archive.getName()));
         Intent share=new Intent(Intent.ACTION_SEND); share.setType("application/zip"); share.putExtra(Intent.EXTRA_STREAM,uri);
         share.setClipData(ClipData.newUri(getContentResolver(),"APK export",uri)); share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        startActivity(Intent.createChooser(share,"Copy or share APK export"));
+        return share;
+    }
+
+    void shareExport(File archive,String title) {
+        startActivity(Intent.createChooser(createShareIntent(archive),title));
+    }
+
+    void sendToChatGPT(File archive) {
+        Intent send=createShareIntent(archive);
+        send.setPackage("com.openai.chatgpt");
+        if(send.resolveActivity(getPackageManager())!=null) {
+            try { startActivity(send); return; } catch(Exception ignored) { }
+        }
+        openChatGPTAfterSave=true;
+        saveExport(archive);
     }
 
     void saveExport(File archive) {
@@ -115,20 +130,28 @@ public class MainActivity extends Activity {
             intent.putExtra(Intent.EXTRA_TITLE,archive.getName());
             startActivityForResult(intent,SAVE_EXPORT_REQUEST);
         } catch(Exception e) {
+            openChatGPTAfterSave=false;
             new android.app.AlertDialog.Builder(this).setTitle("Save picker unavailable")
-                .setMessage("Your headset does not provide a save picker. You can still share the export.")
-                .setPositiveButton("Share instead",(d,w)->shareExport(archive)).setNegativeButton("Cancel",null).show();
+                .setMessage("The headset could not open a save picker. Use Share to send the export to another app over Wi-Fi.")
+                .setPositiveButton("Share instead",(d,w)->shareExport(archive,"Share APK export")).setNegativeButton("Cancel",null).show();
         }
     }
 
     @Override protected void onActivityResult(int requestCode,int resultCode,Intent data) {
         super.onActivityResult(requestCode,resultCode,data);
-        if(requestCode!=SAVE_EXPORT_REQUEST||resultCode!=RESULT_OK||data==null||data.getData()==null||pendingExport==null) return;
+        if(requestCode!=SAVE_EXPORT_REQUEST) return;
+        if(resultCode!=RESULT_OK||data==null||data.getData()==null||pendingExport==null) { openChatGPTAfterSave=false; return; }
         try(InputStream in=new FileInputStream(pendingExport); OutputStream out=getContentResolver().openOutputStream(data.getData())) {
             if(out==null) throw new IOException("Could not open the selected destination");
             byte[] buf=new byte[32768]; int n; while((n=in.read(buf))>0) out.write(buf,0,n);
-            Toast.makeText(this,"Export copied to the selected folder",Toast.LENGTH_LONG).show();
-        } catch(Exception e) { new android.app.AlertDialog.Builder(this).setTitle("Copy failed").setMessage(e.toString()).setPositiveButton("OK",null).show(); }
+            boolean sendToChatGPT=openChatGPTAfterSave;
+            openChatGPTAfterSave=false;
+            Toast.makeText(this,sendToChatGPT?"Saved. Attach the ZIP in ChatGPT.":"Export copied to the selected folder",Toast.LENGTH_LONG).show();
+            if(sendToChatGPT) {
+                try { startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://chatgpt.com/"))); }
+                catch(Exception e) { Toast.makeText(this,"Open chatgpt.com in your headset browser and attach the saved ZIP",Toast.LENGTH_LONG).show(); }
+            }
+        } catch(Exception e) { openChatGPTAfterSave=false; new android.app.AlertDialog.Builder(this).setTitle("Copy failed").setMessage(e.toString()).setPositiveButton("OK",null).show(); }
     }
 }
 
