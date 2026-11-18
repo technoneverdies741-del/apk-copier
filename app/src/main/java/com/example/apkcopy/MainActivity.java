@@ -55,7 +55,7 @@ public class MainActivity extends Activity {
             for(int i=0;i<paths.size();i++) {
                 File out=new File(dir,i==0?"base.apk":"split_"+i+".apk");
                 try(InputStream in=new FileInputStream(paths.get(i)); OutputStream os=new FileOutputStream(out)) { byte[] buf=new byte[32768]; int n; while((n=in.read(buf))>0) os.write(buf,0,n); }
-                uris.add(Uri.fromFile(out));
+                uris.add(Uri.parse("content://"+getPackageName()+".fileprovider/"+Uri.encode("exported_apks/"+label+"_"+ai.packageName+"/"+out.getName())));
             }
             Toast.makeText(this,"Saved "+uris.size()+" APK file(s) to app storage. Choose a destination in the share menu.",Toast.LENGTH_LONG).show();
             Intent share=new Intent(Intent.ACTION_SEND_MULTIPLE); share.setType("application/vnd.android.package-archive"); share.putParcelableArrayListExtra(Intent.EXTRA_STREAM,uris); share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
@@ -63,3 +63,7 @@ public class MainActivity extends Activity {
         } catch(Exception e) { new android.app.AlertDialog.Builder(this).setTitle("Export failed").setMessage(e.toString()).setPositiveButton("OK",null).show(); }
     }
 }
+
+
+
+
