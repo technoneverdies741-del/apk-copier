@@ -6,6 +6,7 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.Intent;
+import android.content.ClipData;
 import android.net.Uri;
 import android.graphics.Typeface;
 import android.view.Gravity;
@@ -30,7 +31,12 @@ public class MainActivity extends Activity {
     void loadApps() {
         list.removeAllViews(); apps.clear(); PackageManager pm=getPackageManager();
         List<ApplicationInfo> all=pm.getInstalledApplications(0);
-        Collections.sort(all,(a,b)->pm.getApplicationLabel(a).toString().compareToIgnoreCase(pm.getApplicationLabel(b).toString()));
+        Collections.sort(all,(a,b)->{
+            boolean aPinned="com.playgilla.gilla".equals(a.packageName);
+            boolean bPinned="com.playgilla.gilla".equals(b.packageName);
+            if(aPinned!=bPinned) return aPinned?-1:1;
+            return pm.getApplicationLabel(a).toString().compareToIgnoreCase(pm.getApplicationLabel(b).toString());
+        });
         for(ApplicationInfo ai:all) {
             if(ai.packageName.equals(getPackageName())) continue; apps.add(ai);
             LinearLayout row=new LinearLayout(this); row.setGravity(Gravity.CENTER_VERTICAL); row.setPadding(12,9,4,9);
@@ -58,11 +64,12 @@ public class MainActivity extends Activity {
                 uris.add(Uri.parse("content://"+getPackageName()+".fileprovider/"+Uri.encode("exported_apks/"+label+"_"+ai.packageName+"/"+out.getName())));
             }
             Toast.makeText(this,"Saved "+uris.size()+" APK file(s) to app storage. Choose a destination in the share menu.",Toast.LENGTH_LONG).show();
-            Intent share=new Intent(Intent.ACTION_SEND_MULTIPLE); share.setType("application/vnd.android.package-archive"); share.putParcelableArrayListExtra(Intent.EXTRA_STREAM,uris); share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            Intent share=new Intent(Intent.ACTION_SEND_MULTIPLE); share.setType("application/vnd.android.package-archive"); share.putParcelableArrayListExtra(Intent.EXTRA_STREAM,uris); ClipData clip=ClipData.newUri(getContentResolver(),"APK files",uris.get(0)); for(int i=1;i<uris.size();i++) clip.addItem(new ClipData.Item(uris.get(i))); share.setClipData(clip); share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             startActivity(Intent.createChooser(share,"Copy or share APK files"));
         } catch(Exception e) { new android.app.AlertDialog.Builder(this).setTitle("Export failed").setMessage(e.toString()).setPositiveButton("OK",null).show(); }
     }
 }
+
 
 
 
